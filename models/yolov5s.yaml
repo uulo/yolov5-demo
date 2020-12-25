@@ -1,0 +1,66 @@
+# parameters
+nc: 20  # number of classes  # 类别数，你的类别有多少就填写多少。从1开始算起，不是0-14这样算
+depth_multiple: 0.33  # model depth multiple  # 控制模型的深度
+width_multiple: 0.50  # layer channel multiple  # 控制卷积核的个数
+
+"""
+depth_multiple 是用在backbone中的number≠1的情况下， 即在Bottleneck层使用，控制模型的深度，yolov5s中设置为0.33，假设yolov5l中有三个Bottleneck，那yolov5s中就只有一个Bottleneck。
+因为一般number=1表示的是功能背景的层，比如说下采样Conv、Focus、SPP（空间金字塔池化）。
+——————————————————————————————————————
+width_multiple 主要是用于设置arguments，例如yolov5s设置为0.5，Focus就变成[32, 3]，Conv就变成[64, 3, 2]。
+以此类推，卷积核的个数都变成了设置的一半。
+"""
+
+# anchors  # 根据你的检测层相应增加anchors
+anchors:
+  - [10,13, 16,30, 33,23]  # P3/8
+  - [30,61, 62,45, 59,119]  # P4/16
+  - [116,90, 156,198, 373,326]  # P5/32
+
+# YOLOv5 backbone
+"""
+Bottleneck 可以译为“瓶颈层”。
+from列参数：-1 代表是从上一层获得的输入，-2表示从上两层获得的输入（head同理）。
+number列参数：1表示只有一个，3表示有三个相同的模块。
+SPP、Conv、Bottleneck、BottleneckCSP的代码可以在./models/common.py中获取到。
+[64, 3] 解析得到[3, 32, 3] ，输入为3（RGB），输出为32，卷积核k为3；
+[128, 3, 2] 这是固定的，128表示输出128个卷积核个数。根据 [128, 3, 2] 解析得到[32, 64, 3, 2] ，32是输入，64是输出（128*0.5=64），3表示3×3的卷积核，2表示步长为2。
+主干网是图片从大到小，深度不断加深。
+args这里的输入都省去了，因为输入都是上层的输出。为了修改过于麻烦，这里输入的获取是从./models/yolo.py的def parse_model(md, ch)函数中解析得到的。
+"""
+backbone:
+  # [from, number, module, args]
+  [[-1, 1, Focus, [64, 3]],  # 0-P1/2
+   [-1, 1, Conv, [128, 3, 2]],  # 1-P2/4
+   [-1, 3, BottleneckCSP, [128]],
+   [-1, 1, Conv, [256, 3, 2]],  # 3-P3/8
+   [-1, 9, BottleneckCSP, [256]],
+   [-1, 1, Conv, [512, 3, 2]],  # 5-P4/16
+   [-1, 9, BottleneckCSP, [512]],
+   [-1, 1, Conv, [1024, 3, 2]],  # 7-P5/32
+   [-1, 1, SPP, [1024, [5, 9, 13]]],
+   [-1, 3, BottleneckCSP, [1024, False]],  # 9
+  ]
+
+# YOLOv5 head  # head一般表示的是经过主干网后输出的特征图，特征图输入head中进行检测，包括类别和位置的检测。
+head:
+  [[-1, 1, Conv, [512, 1, 1]],
+   [-1, 1, nn.Upsample, [None, 2, 'nearest']],
+   [[-1, 6], 1, Concat, [1]],  # cat backbone P4
+   [-1, 3, BottleneckCSP, [512, False]],  # 13
+
+   [-1, 1, Conv, [256, 1, 1]],
+   [-1, 1, nn.Upsample, [None, 2, 'nearest']],
+   [[-1, 4], 1, Concat, [1]],  # cat backbone P3
+   [-1, 3, BottleneckCSP, [256, False]],  # 17 (P3/8-small)
+
+   [-1, 1, Conv, [256, 3, 2]],
+   [[-1, 14], 1, Concat, [1]],  # cat head P4
+   [-1, 3, BottleneckCSP, [512, False]],  # 20 (P4/16-medium)
+
+   [-1, 1, Conv, [512, 3, 2]],
+   [[-1, 10], 1, Concat, [1]],  # cat head P5
+   [-1, 3, BottleneckCSP, [1024, False]],  # 23 (P5/32-large)
+
+   [[17, 20, 23], 1, Detect, [nc, anchors]],  # Detect(P3, P4, P5)
+  ]

@@ -1,0 +1,1 @@
+autosplit方法可以自动将数据集切分成train、val、test
